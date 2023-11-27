@@ -37,7 +37,50 @@ SELECT * from heap_page_items(get_raw_page('accounts',0));
 -- https://muatik.medium.com/notes-on-postgresql-internals-4050340c9f4f)
 
 ------------------------------------------------------------------------------------------------------------------------
--- EXPERIMENT 1: Row-level locks -- Understand row-level locks defined by the `xmax` bit stored in heap pages
+-- QUESTION LEADING TO THESE EXPERIMENTS: Why don't we see differences in `pg_locks` when selecting 1 row or full table?
+------------------------------------------------------------------------------------------------------------------------
+
+-- Trying to see the differences in `pg_locks` when selecting only one row or full table (for update or only select).
+
+BEGIN;
+SELECT * FROM accounts;
+SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
+FROM pg_locks WHERE pid = pg_backend_pid() and relation = 'accounts'::REGCLASS;
+ROLLBACK;
+
+BEGIN;
+SELECT * FROM accounts where acc_no=1;
+SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
+FROM pg_locks WHERE pid = pg_backend_pid() and relation = 'accounts'::REGCLASS;
+-- Same lock info as for previous
+ROLLBACK;
+
+BEGIN;
+SELECT * FROM accounts where acc_no=1 FOR UPDATE;
+SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
+FROM pg_locks WHERE pid = pg_backend_pid() and relation = 'accounts'::REGCLASS;
+-- Same lock info as for previous
+ROLLBACK;
+
+BEGIN;
+SELECT * FROM accounts FOR UPDATE;
+SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
+FROM pg_locks WHERE pid = pg_backend_pid() and relation = 'accounts'::REGCLASS;
+-- Same lock info as for previous
+ROLLBACK;
+
+-- In each of these, we see the same information in `pg_locks`.
+-- But we would have expected differences since it is either one row or the full table that is being selected => we
+-- expect to see different lock levels.
+--
+-- Answer to this question = the way row-level locks are implemented in PostgreSQL. See experiments below.
+-- In a nutshell, locks are not stored in the RAM to avoid using too much memory. Instead, stored at the level of
+-- tuples (= row versions), via the `xmax` field. Can be accessed by looking at heap_pages.
+-- Also, these are used to enqueue several transactions that want to update the same row.
+
+
+------------------------------------------------------------------------------------------------------------------------
+-- EXPERIMENT 1: Row-level locks -- Understand that row-level locks are defined by the `xmax` bit stored in heap pages
 ------------------------------------------------------------------------------------------------------------------------
 
 -- EXCLUSIVE LOCK MODES
