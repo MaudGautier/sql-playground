@@ -7,6 +7,10 @@ DROP VIEW IF EXISTS locks_v;
 DROP TABLE IF EXISTS accounts;
 DROP EXTENSION IF EXISTS pageinspect;
 DROP TABLE IF EXISTS sessions;
+DROP EXTENSION IF EXISTS dblink;
+-- SELECT dblink_get_connections();
+-- SELECT dblink_disconnect('row_level_locks');
+
 
 -- Create dataset
 CREATE TABLE accounts
@@ -35,6 +39,33 @@ ORDER BY lp;
 SELECT * from heap_page_items(get_raw_page('accounts',0));
 -- Note: line pointer is a pointer to each heap tuple, and each heap tuple is a record data (see
 -- https://muatik.medium.com/notes-on-postgresql-internals-4050340c9f4f)
+
+-- Create function encapsulating an autonomous transaction (see experiment `autonomous-transactions` for explanations)
+-- This will allow sharing current transaction ID from each session to this session
+create extension dblink;
+create or replace function insert_into_sessions(session_id integer, txid_current bigint, backend_pid integer) returns void as
+$$
+declare
+    SqlCommand TEXT;
+begin
+    SqlCommand := 'insert into sessions (id, txid_current, backend_pid)
+    values (' || session_id || ', ' || txid_current || ', ' || backend_pid || ')
+    ON CONFLICT (id) DO UPDATE
+        SET txid_current = excluded.txid_current,
+            backend_pid  = excluded.backend_pid;';
+    perform dblink_connect('pragma', 'dbname=postgres');
+    perform dblink_exec('pragma', SqlCommand);
+    perform dblink_exec('pragma', 'commit;');
+    perform dblink_disconnect('pragma');
+end
+$$ language plpgsql;
+CREATE TABLE sessions
+(
+    id integer PRIMARY KEY,
+    txid_current numeric,
+    backend_pid numeric
+);
+
 
 ------------------------------------------------------------------------------------------------------------------------
 -- QUESTION LEADING TO THESE EXPERIMENTS: Why don't we see differences in `pg_locks` when selecting 1 row or full table?
@@ -139,17 +170,15 @@ WHERE locktype in ('relation', 'transactionid', 'tuple')
 
 
 -- Goto session_1 to start a transaction
--- txid: 3683, pg_backend: 21280
 
 -- Look at locks
-SELECT * FROM locks_v WHERE pid = 21280;
+SELECT * FROM locks_v WHERE pid = (SELECT backend_pid FROM sessions WHERE id=1);
 -- Transaction holds the lock on its own ID and on the table (as expected)
 
 -- Goto session_2 to start a transaction
--- txid: 3684, pg_backend: 21283
 
 -- Look at locks
-SELECT * FROM locks_v WHERE pid = 21283;
+SELECT * FROM locks_v WHERE pid = (SELECT backend_pid FROM sessions WHERE id=2);
 -- Transaction holds the lock on its own ID (locktype: transactionID, and lockID: txID) and on the table
 -- (locktype: relation, and lockid: accounts). This is expected.
 -- In addition, 2 more locks:
@@ -170,20 +199,18 @@ SELECT * FROM accounts_v LIMIT 1;
 
 
 -- Goto session_3 to start a transaction
--- txid: 3685, pg_backend: 21376
 
 -- Look at locks
-SELECT * FROM locks_v WHERE pid = 21376;
+SELECT * FROM locks_v WHERE pid = (SELECT backend_pid FROM sessions WHERE id=3);
 -- transaction3 has acquired the lock on itself
 -- Also acquires lock on relation accounts, and waits to be granted the lock on the tuple (will be when released by
 -- transaction2).
 
 
 -- Goto session_4 to start a transaction
--- txid: 3686, pg_backend: 21393
 
 -- Look at locks
-SELECT * FROM locks_v WHERE pid = 21393;
+SELECT * FROM locks_v WHERE pid = (SELECT backend_pid FROM sessions WHERE id=4);
 -- Same as transaction3: wait for lock tuple to be granted.
 
 
