@@ -1,9 +1,7 @@
--- Get process ID of the backend process
-SELECT pg_backend_pid(); -- 21927
-
 -- RUN FIRST
 -- Look at how pg_locks evolve while updating a row
 BEGIN;
+SELECT insert_into_sessions(1, txid_current(), pg_backend_pid());
 UPDATE accounts SET amount = amount + 100 WHERE acc_no = 1;
 -- Go to session_admin to look at the `pg_locks` (or run here, cf below)
 SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted

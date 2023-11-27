@@ -3,6 +3,8 @@
 ------------------------------------------------------------------------------------------------------------------------
 -- Restart from scratch
 DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS sessions;
+DROP EXTENSION IF EXISTS dblink;
 
 -- Create table accounts
 CREATE TABLE accounts
@@ -15,13 +17,39 @@ VALUES (1, 1000.00),
        (2, 2000.00),
        (3, 3000.00);
 
+-- Create function encapsulating an autonomous transaction (see experiment `autonomous-transactions` for explanations)
+-- This will allow sharing current transaction ID from each session to this session
+create extension dblink;
+create or replace function insert_into_sessions(session_id integer, txid_current bigint, backend_pid integer) returns void as
+$$
+declare
+    SqlCommand TEXT;
+begin
+    SqlCommand := 'insert into sessions (id, txid_current, backend_pid)
+    values (' || session_id || ', ' || txid_current || ', ' || backend_pid || ')
+    ON CONFLICT (id) DO UPDATE
+        SET txid_current = excluded.txid_current,
+            backend_pid  = excluded.backend_pid;';
+    perform dblink_connect('pragma', 'dbname=postgres');
+    perform dblink_exec('pragma', SqlCommand);
+    perform dblink_exec('pragma', 'commit;');
+    perform dblink_disconnect('pragma');
+end
+$$ language plpgsql;
+CREATE TABLE sessions
+(
+    id integer PRIMARY KEY,
+    txid_current numeric,
+    backend_pid numeric
+);
+
 
 ------------------------------------------------------------------------------------------------------------------------
 -- PRE-EXPERIMENT: Which locks are held in a transaction? (Looking at `pg_locks`)
 ------------------------------------------------------------------------------------------------------------------------
 
 -- Get process ID of the backend process
-SELECT pg_backend_pid(); -- 21917
+SELECT pg_backend_pid();
 
 -- Look at pg_locks
 SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
@@ -45,7 +73,7 @@ ROLLBACK;
 -- Run session_1.sql and look at pg_locks
 SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
 FROM pg_locks
-WHERE pid = 21927; -- background PID of session_1
+WHERE pid = (SELECT backend_pid FROM sessions WHERE id=1); -- background PID of session_1
 -- At this stage, we have a RowExclusiveLock on accounts and on the index (created for the primary_key)
 -- Also an additional lock on the transaction id
 -- As expected, this is exactly identical to the locks held when run just above in session_admin.sql.
@@ -54,11 +82,12 @@ WHERE pid = 21927; -- background PID of session_1
 -- Run session_2.sql and look at pg_locks
 SELECT locktype, relation::REGCLASS, virtualxid AS virtxid, transactionid AS xid, mode, granted
 FROM pg_locks
-WHERE pid = 21929; -- background PID of session_2
+WHERE pid = (SELECT backend_pid FROM sessions WHERE id=2); -- background PID of session_2
 -- We see that session_2 (creating index) is trying to get lock on relation accounts, but it is not granted
 -- (granted = false) => it is hanging
 
 -- Find blocking PID for session_2
+SELECT backend_pid FROM sessions WHERE id=2;
 SELECT pg_blocking_pids(21929);
 -- We see that what is blocking is {21927}, i.e. process id from session_1
 
