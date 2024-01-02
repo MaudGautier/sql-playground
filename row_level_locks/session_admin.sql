@@ -27,6 +27,7 @@ CREATE EXTENSION pageinspect;
 
 CREATE VIEW accounts_v AS
 SELECT '(0,' || lp || ')'                                      AS ctid,
+       t_xmin                                                  as xmin,
        t_xmax                                                  as xmax,
        CASE WHEN (t_infomask & 128) > 0 THEN 't' END           AS lock_only,
        CASE WHEN (t_infomask & 4096) > 0 THEN 't' END          AS is_multi,
@@ -192,6 +193,7 @@ SELECT * FROM locks_v WHERE pid = (SELECT backend_pid FROM sessions WHERE id=2);
 -- Because, xmax set to txID1 => after acquiring the tuple lock, transaction2 looks at xmax and information bits and
 -- sees that the row is locked (cf below)
 SELECT * FROM accounts_v LIMIT 1;
+SELECT * FROM accounts_v;
 -- Therefore, it requires to have a lock on txID1.
 -- Once transaction1 is completed (and thus the lock released) => transaction2 can proceed to write its own xmax, and
 -- then, release the tuple lock.
@@ -216,6 +218,10 @@ SELECT * FROM locks_v WHERE pid = (SELECT backend_pid FROM sessions WHERE id=4);
 
 -- To see the queue appearing
 SELECT pid, wait_event_type, wait_event, pg_blocking_pids(pid)
+FROM pg_stat_activity
+WHERE backend_type = 'client backend';
+-- Get all info
+SELECT *
 FROM pg_stat_activity
 WHERE backend_type = 'client backend';
 -- We see that each transaction is blocked by the previous one (transaction3 by transaction2, transaction2 by
