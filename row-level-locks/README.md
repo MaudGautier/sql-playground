@@ -3,7 +3,6 @@
 This experiment is adapted from [a PostgresPro blog post](https://postgrespro.com/blog/pgsql/5968005) (mainly follows
 the blog post, with some additional research and adaptations).
 
-
 ## Theory - Main takeaways
 
 ### Row-level lock information is stored in a tuple (= row version) instead of RAM in PostgreSQL
@@ -30,16 +29,15 @@ How to queue?
 - As a consequence, **the number of locks used is proportional to the number of simultaneously running processes rather
   than to the number of rows being updated.**
 
-
 ### The `xmax` field of the current up-to-date version indicates whether the row is locked
 
 When a row is deleted or updated, the ID of the transaction that "touched" it is written to the `xmax` field of the
 current up-to-date version (informs on the transaction that deleted the tuple).
 This `xmax` is used to indicate a lock: if `xmax` in a tuple matches an active (not yet completed) transaction, and we
-want to update this very row, we need to wait until the transaction completes, and no additional indicator is needed. 
+want to update this very row, we need to wait until the transaction completes, and no additional indicator is needed.
 
-When using the extension `pageinspect`, we can inspect pages, and see the `xmax` fields in 
-`heap_page_items(get_raw_page(TABLE_NAME, BLOCK_NUMBER))`. (NB: set `BLOCK_NUMBER` to 0 for this experiment, because 
+When using the extension `pageinspect`, we can inspect pages, and see the `xmax` fields in
+`heap_page_items(get_raw_page(TABLE_NAME, BLOCK_NUMBER))`. (NB: set `BLOCK_NUMBER` to 0 for this experiment, because
 little data).
 
 For more info on `heap_page_items`, `get_raw_page` or else, see
@@ -53,8 +51,6 @@ from [the postgreSQL documentation](https://www.postgresql.org/docs/7.2/sql-synt
 - `xmin` = The identity (transaction ID) of the inserting transaction for this tuple.
 - `xmax` = The identity (transaction ID) of the deleting transaction, or zero for an undeleted tuple.
 
-
-
 ### Tuple VS Row
 
 - Row = logical representation of one entry
@@ -63,7 +59,7 @@ from [the postgreSQL documentation](https://www.postgresql.org/docs/7.2/sql-synt
 
 Whenever a row is updated, the previous tuple is marked as dead if it is not used by any other current transaction.
 
-_Note to myself: this seems to be what the multi-version concurrency control (MVCC) is based on !!!_ 
+_Note to myself: this seems to be what the multi-version concurrency control (MVCC) is based on !!!_
 
 References for that:
 
@@ -80,7 +76,7 @@ Show the row-level locks stored in the heap page: the `xmax` bit is set to the t
 touched the row).
 
 If the `xmax` value corresponds to an active transaction (seen in the `pg_stat_activity` table), it means that the lock
-on this row is still held by that transaction. 
+on this row is still held by that transaction.
 With that, other transactions know they cannot update it.
 
 ### Experiment 2: Understand how row-level locks are acquired when multiple concurrent transactions (Where is the end of queues?)
