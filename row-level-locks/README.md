@@ -50,7 +50,7 @@ to [this medium article](https://muatik.medium.com/notes-on-postgresql-internals
 Some precisions on `xmin` and `xmax`
 from [the postgreSQL documentation](https://www.postgresql.org/docs/7.2/sql-syntax-columns.html):
 
-- `xmin`  = The identity (transaction ID) of the inserting transaction for this tuple.
+- `xmin` = The identity (transaction ID) of the inserting transaction for this tuple.
 - `xmax` = The identity (transaction ID) of the deleting transaction, or zero for an undeleted tuple.
 
 
@@ -61,7 +61,7 @@ from [the postgreSQL documentation](https://www.postgresql.org/docs/7.2/sql-synt
 - Tuple = physical representation of that one entry, i.e. an individual state of each row. In other words, each update
   of a row creates a new tuple for the same logical row.
 
-Whenever a row is updated, the previous tuple is marked as dead if it not used by any other current transaction.
+Whenever a row is updated, the previous tuple is marked as dead if it is not used by any other current transaction.
 
 _Note to myself: this seems to be what the multi-version concurrency control (MVCC) is based on !!!_ 
 
@@ -111,7 +111,7 @@ Otherwise (i.e. if there was only a lock on the row), once transaction1 has comp
 all other transactions (2, 3, 4, ...) could start at any time, without any order (=> the first that is awake will take
 it).
 If it was done like this, there is a possibility that one of the transactions may wait for its turn for infinitely long
-(out of bad luck). This is called **lock startvation**.
+(out of bad luck). This is called **lock starvation**.
 
 By having the double-level locking, there is a queue that is being formed => this lock starvation should (????) be
 prevented.
